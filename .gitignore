@@ -1,0 +1,21 @@
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Java / Spring Boot
+target/
+*.log
+
+# Node / Angular
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+
+# Env files
+.env
+
+# OS
+.DS_Store
+Thumbs.db
