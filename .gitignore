@@ -19,3 +19,9 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+.pytest_cache/
