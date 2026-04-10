@@ -4,48 +4,47 @@ from app.core.db import SessionLocal
 from app.users.models import User
 from app.users.repository import UserRepository
 
+
 def test_user_persistence():
-    '''Test básico:
+    """
+    Test básico:
     1. Guarda un usuario en la BD
     2. Lo recupera
     3. Comprueba que los datos coinciden
-    '''
+    """
 
-    # Abre una sesión (conexión con la base de datos)
+    # Abre una sesión con la base de datos
     db = SessionLocal()
 
     try:
-        # Limpiar la tabla para que el test sea repetible
-        db.execute(text("DELETE from users"))
+        # Limpiar tablas en orden correcto para evitar errores de claves foráneas
+        db.execute(text("DELETE FROM refresh_tokens"))
+        db.execute(text("DELETE FROM users"))
         db.commit()
 
-        # Crear repositorio usando la sesión actual
+        # Creamos el repositorio
         repo = UserRepository(db)
 
-        # Crear un nuevo usuario en memoria (todavía no está en la BD)
+        # Creamos un usuario de prueba
         user = User(
-            email="david@test.com",
-            password_hash="hash_fake",
-            display_name="David"
+            email="test@example.com",
+            password_hash="hash_de_prueba",
+            display_name="Usuario Test",
+            is_active=True,
         )
 
-        # Guardar el usuario en PostgreSQL
-        saved = repo.create(user)
+        # Lo guardamos en base de datos
+        created_user = repo.create(user)
 
-        # Comprobar que se generó un ID
-        assert saved.id is not None
+        # Lo recuperamos por email
+        recovered_user = repo.find_by_email("test@example.com")
 
-        # Buscar el usuario por email
-        found = repo.find_by_email("david@test.com")
+        # Comprobaciones
+        assert created_user.id is not None
+        assert recovered_user is not None
+        assert recovered_user.email == "test@example.com"
+        assert recovered_user.display_name == "Usuario Test"
+        assert recovered_user.is_active is True
 
-        # Comprobar que existe
-        assert found is not None
-
-        # Valida datos clave
-        assert found.email == "david@test.com"
-        assert found.password_hash == "hash_fake"
-        assert found.display_name == "David"
-        
     finally:
-        # Cierra la sesión pase lo que pase
         db.close()
