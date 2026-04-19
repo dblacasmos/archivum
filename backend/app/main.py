@@ -14,6 +14,7 @@ from app.core.request_context import (
     set_request_id,
     set_user_id,
 )
+from app.documents.embedding_router import router as document_embeddings_router
 from app.documents.router import router as documents_router
 from app.query.router import router as query_router
 
@@ -127,8 +128,11 @@ async def request_context_middleware(request: Request, call_next):
 # Router de autenticación
 app.include_router(auth_router)
 
-# Router de documentos con control RBAC + ACL
+# Router principal de documentos
 app.include_router(documents_router)
+
+# Router de embeddings de R40
+app.include_router(document_embeddings_router)
 
 # Router temporal de consultas para dejar preparada
 # la observabilidad de R15 y el futuro RAG.

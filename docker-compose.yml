@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:16
+    # Usamos la imagen oficial de pgvector para PostgreSQL 16.
+    # Así no dependemos de instalar la extensión a mano dentro del contenedor.
+    image: pgvector/pgvector:pg16
+    container_name: archivum-db
     environment:
       POSTGRES_USER: archivum
       POSTGRES_PASSWORD: archivum

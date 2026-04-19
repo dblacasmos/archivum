@@ -53,5 +53,48 @@ class Settings(BaseSettings):
     rate_limit_upload_max_requests: int = 10
     rate_limit_upload_window_seconds: int = 60
 
+    # ----------------
+    # Subida de documentos (R20)
+    # ----------------
+    upload_dir: str = str(PROJECT_DIR / "storage" / "documents")
+    max_upload_size_bytes: int = 10 * 1024 * 1024  # 10 MB
+
+    # Lista simple de extensiones permitidas para mantener
+    # la subida controlada y evitar formatos no contemplados.
+    allowed_upload_extensions: str = ".pdf,.txt,.md,.doc,.docx"
+
+    # ----------------
+    # Embeddings (R40 / R41)
+    # ----------------
+    # Clave del proveedor externo de embeddings.
+    openai_api_key: str | None = None
+
+    # Modelo por defecto para generar embeddings.
+    openai_embeddings_model: str = "text-embedding-3-small"
+
+    # Número de dimensiones esperadas por el modelo configurado.
+    # Lo dejamos explícito para que el esquema vectorial sea estable.
+    openai_embeddings_dimensions: int = 1536
+
+    # URL oficial del endpoint de embeddings.
+    openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
+
+    # Timeout para evitar que una petición colgada deje bloqueado el proceso.
+    openai_embeddings_timeout_seconds: int = 60
+
+    # Tamaño de lote para generar varios embeddings de una sola vez.
+    openai_embeddings_batch_size: int = 32
+
+    def get_allowed_upload_extensions(self) -> set[str]:
+        """
+        Convierte la cadena del .env en un conjunto de extensiones
+        normalizadas en minúsculas.
+        """
+        return {
+            item.strip().lower()
+            for item in self.allowed_upload_extensions.split(",")
+            if item.strip()
+        }
+
 
 settings = Settings()

@@ -19,7 +19,15 @@ from app.core.db import Base
 # Importamos todos los modelos para que Alembic los detecte
 from app.users.models import User
 from app.auth.models import RefreshToken, Role, UserRole
-from app.documents.models import Document, DocumentAccess
+from app.documents.models import (
+    Document,
+    DocumentAccess,
+    DocumentMetadata,
+    DocumentVersion,
+    DocumentChunk,
+    DocumentEmbedding,
+    PipelineJob,
+)
 
 target_metadata = Base.metadata
 
