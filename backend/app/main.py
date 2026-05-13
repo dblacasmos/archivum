@@ -3,7 +3,6 @@ import uuid
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.auth.router import router as auth_router
 from app.auth.security import decode_token, get_current_user
@@ -18,6 +17,7 @@ from app.core.request_context import (
 from app.documents.embedding_router import router as document_embeddings_router
 from app.documents.router import router as documents_router
 from app.query.router import router as query_router
+from app.rag.router import router as rag_router
 
 # Configuramos el logging antes de crear la app,
 # para que cualquier log ya salga en JSON desde el principio.
@@ -97,6 +97,7 @@ async def request_context_middleware(request: Request, call_next):
         response = await call_next(request)
         status_code = response.status_code
         return response
+
     except Exception:
         # Si algo explota antes de construir respuesta,
         # dejamos constancia en el log.
@@ -111,6 +112,7 @@ async def request_context_middleware(request: Request, call_next):
             },
         )
         raise
+
     finally:
         duration_seconds = time.perf_counter() - start_time
         duration_ms = round(duration_seconds * 1000, 2)
@@ -154,6 +156,9 @@ app.include_router(document_embeddings_router)
 
 # Router de consultas usado por R50-R56.
 app.include_router(query_router)
+
+# Router del flujo RAG básico R70.
+app.include_router(rag_router)
 
 
 @app.get("/metrics", tags=["observability"])

@@ -85,6 +85,21 @@ class Settings(BaseSettings):
     # Tamaño de lote para generar varios embeddings de una sola vez.
     openai_embeddings_batch_size: int = 32
 
+    # ----------------
+    # LLM / RAG (R70)
+    # ----------------
+    # Modelo usado para generar la respuesta final del flujo RAG.
+    openai_chat_model: str = "gpt-4o-mini"
+
+    # URL oficial del endpoint de chat completions.
+    openai_chat_url: str = "https://api.openai.com/v1/chat/completions"
+
+    # Timeout de la llamada al LLM para evitar bloqueos largos.
+    openai_chat_timeout_seconds: int = 60
+
+    # Temperatura baja para respuestas más estables y menos creativas.
+    openai_chat_temperature: float = 0.2
+
     def get_allowed_upload_extensions(self) -> set[str]:
         """
         Convierte la cadena del .env en un conjunto de extensiones
