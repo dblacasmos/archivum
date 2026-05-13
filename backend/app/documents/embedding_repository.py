@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
 from app.documents.models import DocumentChunk, DocumentEmbedding
@@ -11,9 +11,10 @@ class DocumentEmbeddingRepository:
     """
     Repositorio específico para trabajar con chunks y embeddings.
 
-    En R42 añadimos también una consulta vectorial básica
-    para demostrar que los embeddings almacenados en pgvector
-    pueden recuperarse por similitud.
+    En R42 añadimos una consulta vectorial básica por versión.
+    En R50 ampliamos esa capacidad para buscar sobre varios documentos.
+    En R51 añadimos búsqueda textual básica.
+    En R53 añadimos filtros por metadata documental.
     """
 
     def __init__(self, db: Session):
@@ -121,13 +122,6 @@ class DocumentEmbeddingRepository:
     def _get_distance_operator(self, metric: str) -> str:
         """
         Devuelve el operador SQL de pgvector según la métrica solicitada.
-
-        Métricas soportadas en esta fase:
-        - cosine: distancia por coseno
-        - l2: distancia euclídea
-        - inner_product: producto interno negativo
-
-        No abrimos la puerta a cualquier texto para evitar SQL inseguro.
         """
         supported_metrics = {
             "cosine": "<=>",
@@ -143,6 +137,77 @@ class DocumentEmbeddingRepository:
 
         return operator
 
+    def _normalize_metadata_filters(
+        self,
+        metadata_filters: dict[str, str] | None,
+    ) -> dict[str, str]:
+        """
+        Limpia y valida los filtros de metadata.
+
+        No permitimos claves o valores vacíos porque una búsqueda así
+        no tendría sentido y solo serviría para romper cosas, que ya bastante
+        hace la humanidad sin ayuda.
+        """
+        if not metadata_filters:
+            return {}
+
+        normalized_filters: dict[str, str] = {}
+
+        for key, value in metadata_filters.items():
+            clean_key = str(key).strip()
+            clean_value = str(value).strip()
+
+            if not clean_key:
+                raise ValueError("Las claves de metadata no pueden estar vacías")
+
+            if not clean_value:
+                raise ValueError("Los valores de metadata no pueden estar vacíos")
+
+            normalized_filters[clean_key] = clean_value
+
+        return normalized_filters
+
+    def _build_metadata_filter_sql(
+        self,
+        document_id_expression: str,
+        metadata_filters: dict[str, str] | None,
+        params: dict,
+    ) -> str:
+        """
+        Construye las condiciones SQL necesarias para filtrar por metadata.
+
+        Se usa EXISTS para exigir que el documento tenga una fila de metadata
+        con la clave y el valor indicados.
+        """
+        normalized_filters = self._normalize_metadata_filters(metadata_filters)
+
+        if not normalized_filters:
+            return ""
+
+        metadata_conditions = []
+
+        for index, (meta_key, meta_value) in enumerate(normalized_filters.items()):
+            key_param = f"metadata_key_{index}"
+            value_param = f"metadata_value_{index}"
+            alias = f"dm_filter_{index}"
+
+            metadata_conditions.append(
+                f"""
+                EXISTS (
+                    SELECT 1
+                    FROM document_metadata AS {alias}
+                    WHERE {alias}.document_id = {document_id_expression}
+                      AND LOWER({alias}.meta_key) = LOWER(:{key_param})
+                      AND LOWER({alias}.meta_value) = LOWER(:{value_param})
+                )
+                """
+            )
+
+            params[key_param] = meta_key
+            params[value_param] = meta_value
+
+        return " AND " + " AND ".join(metadata_conditions)
+
     def similarity_search_by_vector(
         self,
         document_version_id: uuid.UUID,
@@ -154,13 +219,7 @@ class DocumentEmbeddingRepository:
         Ejecuta una consulta vectorial básica contra los embeddings
         de una versión documental concreta.
 
-        Esta función NO implementa aún la búsqueda semántica completa de R50.
-        Aquí solo demostramos la parte de infraestructura:
-        - ya existe el vector guardado
-        - ya existe el índice
-        - ya podemos ordenar por similitud
-
-        Devuelve una lista simple de resultados con distancia calculada.
+        Esta función sigue existiendo porque la usan R42 y R43.
         """
         if limit < 1:
             raise ValueError("El límite de resultados debe ser mayor que cero")
@@ -195,5 +254,142 @@ class DocumentEmbeddingRepository:
                 "limit_value": limit,
             },
         ).mappings().all()
+
+        return [dict(row) for row in rows]
+
+    def similarity_search_for_documents(
+        self,
+        document_ids: list[uuid.UUID],
+        query_vector: list[float],
+        limit: int = 5,
+        metric: str = "cosine",
+        metadata_filters: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """
+        Ejecuta la búsqueda semántica básica de R50 sobre varios documentos.
+
+        En R53 permite aplicar filtros por metadata antes de ordenar
+        los resultados por similitud vectorial.
+        """
+        if limit < 1:
+            raise ValueError("El límite de resultados debe ser mayor que cero")
+
+        if not document_ids:
+            return []
+
+        vector_literal = self._build_vector_literal(query_vector)
+        distance_operator = self._get_distance_operator(metric)
+
+        params = {
+            "document_ids": document_ids,
+            "query_vector": vector_literal,
+            "limit_value": limit,
+        }
+
+        metadata_sql = self._build_metadata_filter_sql(
+            document_id_expression="de.document_id",
+            metadata_filters=metadata_filters,
+            params=params,
+        )
+
+        stmt = text(
+            f"""
+            SELECT
+                de.document_id AS document_id,
+                de.document_version_id AS document_version_id,
+                d.title AS document_title,
+                de.chunk_id AS chunk_id,
+                dc.chunk_index AS chunk_index,
+                dc.content AS chunk_content,
+                de.embedding_vector {distance_operator} CAST(:query_vector AS vector) AS distance_value
+            FROM document_embeddings AS de
+            INNER JOIN document_chunks AS dc
+                ON dc.id = de.chunk_id
+            INNER JOIN documents AS d
+                ON d.id = de.document_id
+            WHERE de.document_id IN :document_ids
+              AND de.status = 'completed'
+              {metadata_sql}
+            ORDER BY de.embedding_vector {distance_operator} CAST(:query_vector AS vector)
+            LIMIT :limit_value
+            """
+        ).bindparams(bindparam("document_ids", expanding=True))
+
+        rows = self.db.execute(stmt, params).mappings().all()
+
+        return [dict(row) for row in rows]
+
+    def textual_search_for_documents(
+        self,
+        document_ids: list[uuid.UUID],
+        query: str,
+        limit: int = 5,
+        metadata_filters: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """
+        Ejecuta una búsqueda textual sencilla sobre los chunks visibles.
+
+        En R53 también permite filtrar por metadata documental.
+        """
+        if limit < 1:
+            raise ValueError("El límite de resultados debe ser mayor que cero")
+
+        clean_query = query.strip()
+        if not clean_query:
+            raise ValueError("La consulta textual no puede estar vacía")
+
+        if not document_ids:
+            return []
+
+        query_terms = [
+            term.strip().lower()
+            for term in clean_query.split()
+            if term.strip()
+        ]
+
+        if not query_terms:
+            return []
+
+        where_conditions = []
+        params = {
+            "document_ids": document_ids,
+            "limit_value": limit,
+        }
+
+        for index, term in enumerate(query_terms):
+            param_name = f"term_{index}"
+            where_conditions.append(f"LOWER(dc.content) LIKE :{param_name}")
+            params[param_name] = f"%{term}%"
+
+        textual_filter = " OR ".join(where_conditions)
+
+        metadata_sql = self._build_metadata_filter_sql(
+            document_id_expression="dc.document_id",
+            metadata_filters=metadata_filters,
+            params=params,
+        )
+
+        stmt = text(
+            f"""
+            SELECT
+                dc.document_id AS document_id,
+                dc.document_version_id AS document_version_id,
+                d.title AS document_title,
+                dc.id AS chunk_id,
+                dc.chunk_index AS chunk_index,
+                dc.content AS chunk_content,
+                1.0 AS textual_score
+            FROM document_chunks AS dc
+            INNER JOIN documents AS d
+                ON d.id = dc.document_id
+            WHERE dc.document_id IN :document_ids
+              AND ({textual_filter})
+              {metadata_sql}
+            ORDER BY dc.chunk_index ASC
+            LIMIT :limit_value
+            """
+        ).bindparams(bindparam("document_ids", expanding=True))
+
+        rows = self.db.execute(stmt, params).mappings().all()
 
         return [dict(row) for row in rows]

@@ -1,122 +1,148 @@
-from pydantic import BaseModel
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.auth.security import get_current_active_user
+from app.core.db import get_session
 from app.core.logging import get_logger
 from app.core.metrics import run_observed_stage
+from app.documents.embedding_repository import DocumentEmbeddingRepository
+from app.documents.embeddings import OpenAIEmbeddingClient
+from app.documents.repository import DocumentRepository
+from app.query.schemas import QueryRequest, QueryResponse
+from app.query.service import SemanticSearchService
 
 router = APIRouter(prefix="/query", tags=["query"])
 logger = get_logger(__name__)
 
 
-class QueryRequest(BaseModel):
+def get_semantic_search_service(
+    session: Session = Depends(get_session),
+) -> SemanticSearchService:
     """
-    Cuerpo mínimo de consulta.
+    Construye el servicio de búsqueda con sus dependencias.
 
-    En esta fase del proyecto todavía no existe el RAG completo,
-    pero sí dejamos preparada la instrumentación de observabilidad
-    para las etapas retrieval, embedding y llm.
+    Se crea aquí para mantener el endpoint limpio y dejar la lógica real
+    dentro del servicio de aplicación.
     """
+    document_repo = DocumentRepository(session)
+    embedding_repo = DocumentEmbeddingRepository(session)
+    embedding_client = OpenAIEmbeddingClient()
 
-    query: str
-
-
-def simulate_retrieval(query: str) -> list[str]:
-    """
-    Simula la etapa de retrieval.
-
-    Más adelante, en R50-R51 y R70, aquí irá la recuperación real
-    de documentos o chunks relevantes.
-    """
-    return [
-        f"Fragmento relacionado con la consulta: {query}",
-        "Segundo fragmento de contexto de ejemplo",
-    ]
-
-
-def simulate_embedding(query: str) -> list[float]:
-    """
-    Simula la etapa de embedding.
-
-    En el futuro aquí se generará el embedding real de la consulta.
-    """
-    # El contenido es ficticio porque en R15 lo importante no es
-    # el embedding real, sino dejar la observabilidad preparada.
-    return [0.12, 0.48, 0.91]
-
-
-def simulate_llm_answer(query: str, contexts: list[str]) -> str:
-    """
-    Simula la etapa de generación de respuesta.
-
-    En R70 esta función será sustituida por la llamada real al LLM.
-    """
-    return (
-        f"Respuesta simulada para la consulta '{query}'. "
-        f"Se han usado {len(contexts)} fragmentos de contexto."
+    return SemanticSearchService(
+        document_repo=document_repo,
+        embedding_repo=embedding_repo,
+        embedding_client=embedding_client,
     )
 
 
-@router.post("")
+@router.post("", response_model=QueryResponse)
 async def query_documents(
     body: QueryRequest,
     current_user=Depends(get_current_active_user),
+    service: SemanticSearchService = Depends(get_semantic_search_service),
 ):
     """
-    Endpoint temporal de consulta.
+    Endpoint de búsqueda documental.
 
-    Su objetivo actual es doble:
-    - mantener la protección ya usada en R14
-    - dejar lista la observabilidad por etapas para R15
+    search_mode:
+    - semantic: búsqueda vectorial de R50.
+    - hybrid: búsqueda texto + vector de R51.
+
+    En R52, ambos modos devuelven información de ranking explicable.
+    En R53, ambos modos permiten filtrar por metadata documental.
     """
-    logger.info(
-        "Inicio de consulta",
-        extra={
-            "event_data": {
-                "event": "query_start",
-                "path": "/query",
-                "method": "POST",
-                "query_length": len(body.query),
-            }
-        },
-    )
+    try:
+        logger.info(
+            "Inicio de consulta documental",
+            extra={
+                "event_data": {
+                    "event": "query_start",
+                    "path": "/query",
+                    "method": "POST",
+                    "query_length": len(body.query),
+                    "limit": body.limit,
+                    "metric": body.metric,
+                    "search_mode": body.search_mode,
+                    "metadata_filters": body.metadata_filters,
+                }
+            },
+        )
 
-    contexts = run_observed_stage(
-        stage="retrieval",
-        action=lambda: simulate_retrieval(body.query),
-    )
+        if body.search_mode not in {"semantic", "hybrid"}:
+            raise ValueError("Modo de búsqueda no soportado. Usa semantic o hybrid")
 
-    query_embedding = run_observed_stage(
-        stage="embedding",
-        action=lambda: simulate_embedding(body.query),
-    )
+        query_embedding = run_observed_stage(
+            stage="embedding",
+            action=lambda: service.generate_query_embedding(body.query),
+        )
 
-    answer = run_observed_stage(
-        stage="llm",
-        action=lambda: simulate_llm_answer(body.query, contexts),
-    )
+        if body.search_mode == "hybrid":
+            results = run_observed_stage(
+                stage="retrieval",
+                action=lambda: service.retrieve_hybrid_chunks(
+                    current_user=current_user,
+                    query=body.query,
+                    query_vector=query_embedding,
+                    limit=body.limit,
+                    metric=body.metric,
+                    metadata_filters=body.metadata_filters,
+                ),
+            )
+            message = "Consulta híbrida procesada correctamente"
+        else:
+            results = run_observed_stage(
+                stage="retrieval",
+                action=lambda: service.retrieve_similar_chunks(
+                    current_user=current_user,
+                    query_vector=query_embedding,
+                    limit=body.limit,
+                    metric=body.metric,
+                    metadata_filters=body.metadata_filters,
+                ),
+            )
+            message = "Consulta semántica procesada correctamente"
 
-    logger.info(
-        "Consulta finalizada",
-        extra={
-            "event_data": {
-                "event": "query_completed",
-                "path": "/query",
-                "method": "POST",
-                "retrieved_chunks": len(contexts),
-            }
-        },
-    )
+        answer = run_observed_stage(
+            stage="llm",
+            action=lambda: service.build_search_answer(
+                query=body.query,
+                results=results,
+            ),
+        )
 
-    return {
-        "message": "Consulta procesada correctamente",
-        "query": body.query,
-        "user_id": str(current_user.id),
-        "retrieved_chunks": len(contexts),
-        "answer": answer,
-        "observability_ready": True,
-        "debug": {
-            "embedding_dimensions": len(query_embedding),
-        },
-    }
+        logger.info(
+            "Consulta documental finalizada",
+            extra={
+                "event_data": {
+                    "event": "query_completed",
+                    "path": "/query",
+                    "method": "POST",
+                    "retrieved_chunks": len(results),
+                    "search_mode": body.search_mode,
+                    "metadata_filters": body.metadata_filters,
+                }
+            },
+        )
+
+        return QueryResponse(
+            message=message,
+            query=body.query,
+            user_id=str(current_user.id),
+            retrieved_chunks=len(results),
+            answer=answer,
+            observability_ready=True,
+            results=results,
+            debug={
+                "embedding_dimensions": len(query_embedding),
+                "metric": body.metric,
+                "search_mode": body.search_mode,
+                "ranking": "explainable_basic",
+                "metadata_filters": body.metadata_filters,
+            },
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
