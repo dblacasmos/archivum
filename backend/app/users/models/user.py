@@ -85,3 +85,10 @@ class User(Base):
         cascade="all, delete-orphan",
         foreign_keys="DocumentAccess.user_id",
     )
+
+    # Un usuario puede tener muchos eventos de tracking asociados
+    tracking_events = relationship(
+        "TrackingEvent",
+        back_populates="user",
+        foreign_keys="TrackingEvent.user_id",
+    )

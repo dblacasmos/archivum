@@ -28,6 +28,7 @@ from app.documents.models import (
     DocumentEmbedding,
     PipelineJob,
 )
+from app.tracking.models import TrackingEvent
 
 target_metadata = Base.metadata
 

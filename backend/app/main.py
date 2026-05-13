@@ -4,6 +4,7 @@ import uuid
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.analytics.router import router as analytics_router
 from app.auth.router import router as auth_router
 from app.auth.security import decode_token, get_current_user
 from app.core.logging import configure_logging, get_logger
@@ -18,6 +19,7 @@ from app.documents.embedding_router import router as document_embeddings_router
 from app.documents.router import router as documents_router
 from app.query.router import router as query_router
 from app.rag.router import router as rag_router
+from app.tracking.router import router as tracking_router
 
 # Configuramos el logging antes de crear la app,
 # para que cualquier log ya salga en JSON desde el principio.
@@ -159,6 +161,12 @@ app.include_router(query_router)
 
 # Router del flujo RAG básico R70.
 app.include_router(rag_router)
+
+# Router del tracking de eventos
+app.include_router(tracking_router)
+
+# Router de analítica básica para Power BI.
+app.include_router(analytics_router)
 
 
 @app.get("/metrics", tags=["observability"])
