@@ -10,6 +10,8 @@ from app.documents.embeddings import OpenAIEmbeddingClient
 from app.documents.repository import DocumentRepository
 from app.query.schemas import QueryRequest, QueryResponse
 from app.query.service import SemanticSearchService
+from app.tracking.repository import TrackingEventRepository
+from app.tracking.service import TrackingEventService
 
 router = APIRouter(prefix="/query", tags=["query"])
 logger = get_logger(__name__)
@@ -40,6 +42,7 @@ async def query_documents(
     body: QueryRequest,
     current_user=Depends(get_current_active_user),
     service: SemanticSearchService = Depends(get_semantic_search_service),
+    session: Session = Depends(get_session),
 ):
     """
     Endpoint de búsqueda documental.
@@ -108,6 +111,24 @@ async def query_documents(
                 query=body.query,
                 results=results,
             ),
+        )
+
+        tracking_service = TrackingEventService(
+            repository=TrackingEventRepository(session)
+        )
+
+        tracking_service.track_event(
+            event_type="query_executed",
+            user_id=current_user.id,
+            source="frontend",
+            payload={
+                "query": body.query,
+                "search_mode": body.search_mode,
+                "metric": body.metric,
+                "limit": body.limit,
+                "results_count": len(results),
+                "metadata_filters": body.metadata_filters,
+            },
         )
 
         logger.info(

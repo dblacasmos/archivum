@@ -22,6 +22,8 @@ from app.rag.schemas import (
 )
 from app.rag.service import BasicRagService
 from app.rag.usage_metrics import RagUsageMetricsService
+from app.tracking.repository import TrackingEventRepository
+from app.tracking.service import TrackingEventService
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 logger = get_logger(__name__)
@@ -91,6 +93,34 @@ def generate_rag_answer(
         checks = result["hallucination_checks"]
         evaluation = result["evaluation"]
         usage_metrics = result["usage_metrics"]
+
+        tracking_service = TrackingEventService(
+            repository=TrackingEventRepository(db)
+        )
+
+        tracking_service.track_event(
+            event_type="rag_executed",
+            user_id=current_user.id,
+            source="frontend",
+            payload={
+                "query": body.query,
+                "search_mode": body.search_mode,
+                "limit": body.limit,
+                "retrieved_chunks": result["retrieved_context_count"],
+                "used_context_chunks": len(context_chunks),
+                "citations_count": len(result["citations"]),
+                "answer_status": result["answer_status"],
+                "fallback_applied": result["fallback_applied"],
+                "evaluation_verdict": evaluation.verdict,
+                "evaluation_overall_score": evaluation.overall_score,
+                "total_latency_ms": usage_metrics.total_latency_ms,
+                "retrieval_latency_ms": usage_metrics.retrieval_latency_ms,
+                "llm_latency_ms": usage_metrics.llm_latency_ms,
+                "total_tokens_estimated": usage_metrics.total_tokens_estimated,
+                "estimated_cost_eur": usage_metrics.estimated_cost_eur,
+                "metadata_filters": body.metadata_filters,
+            },
+        )
 
         logger.info(
             "Flujo RAG finalizado con métricas de latencia y coste",

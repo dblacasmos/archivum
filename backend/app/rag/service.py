@@ -114,6 +114,78 @@ class BasicRagService:
 
         raise ValueError("Modo de búsqueda no soportado. Usa semantic o hybrid")
 
+    def filter_relevant_context(
+        self,
+        query: str,
+        context_chunks: list[SemanticSearchResult],
+    ) -> list[SemanticSearchResult]:
+        """
+        Filtra chunks poco relevantes antes de construir el prompt RAG.
+
+        Se prioriza la coincidencia real de términos importantes de la
+        pregunta dentro del contenido del chunk, evitando usar documentos
+        accesibles pero no relacionados.
+        """
+        clean_query = query.lower().strip()
+
+        if not clean_query or not context_chunks:
+            return []
+
+        # Palabras vacías que no aportan intención documental.
+        stopwords = {
+            "como",
+            "cómo",
+            "que",
+            "qué",
+            "para",
+            "sobre",
+            "desde",
+            "donde",
+            "dónde",
+            "cuando",
+            "cuándo",
+            "gestionan",
+            "gestiona",
+            "gestion",
+            "gestión",
+            "empleados",
+            "trabajadores",
+            "documento",
+            "sistema",
+        }
+
+        query_terms = [
+            term.strip("¿?.,;:()[]{}")
+            for term in clean_query.split()
+            if len(term.strip("¿?.,;:()[]{}")) >= 4
+            and term.strip("¿?.,;:()[]{}") not in stopwords
+        ]
+
+        # Reglas explícitas para consultas conocidas del dominio.
+        if "vacaciones" in clean_query:
+            required_terms = {"vacaciones"}
+        elif "despido" in clean_query:
+            required_terms = {"despido", "disciplinario", "contrato"}
+        elif "rag" in clean_query or "pipeline" in clean_query or "embeddings" in clean_query:
+            required_terms = {"rag", "pipeline", "embeddings", "vectorial", "chunks"}
+        else:
+            required_terms = set(query_terms)
+
+        filtered_chunks: list[SemanticSearchResult] = []
+
+        for chunk in context_chunks:
+            chunk_text = (chunk.chunk_content or "").lower()
+
+            has_required_match = any(
+                term in chunk_text
+                for term in required_terms
+            )
+
+            if has_required_match:
+                filtered_chunks.append(chunk)
+
+        return filtered_chunks
+
     def build_prompt(
         self,
         query: str,
@@ -187,8 +259,13 @@ class BasicRagService:
         )
         retrieval_latency_ms = (perf_counter() - retrieval_start) * 1000
 
-        limited_context_chunks = self.hallucination_guard.limit_context(
+        relevant_context_chunks = self.filter_relevant_context(
+            query=query,
             context_chunks=retrieved_context_chunks,
+        )
+
+        limited_context_chunks = self.hallucination_guard.limit_context(
+            context_chunks=relevant_context_chunks,
             requested_limit=limit,
         )
 
