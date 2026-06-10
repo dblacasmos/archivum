@@ -16,7 +16,6 @@ Estos diagramas complementan la arquitectura estática mostrando el comportamien
 
 # 2. Flujo de Ingesta Documental
 
-**Figura X.X – Diagrama de Secuencia: Ingesta Documental**
 
 ## 2.1 Descripción General
 
@@ -52,7 +51,6 @@ Este flujo da soporte a los requisitos R20–R32.
 
 # 3. Flujo de Búsqueda Semántica
 
-**Figura X.X – Diagrama de Secuencia: Búsqueda Semántica**
 
 ## 3.1 Descripción General
 
@@ -83,7 +81,6 @@ Este flujo se relaciona con R50–R54.
 
 # 4. Flujo RAG (Retrieval-Augmented Generation)
 
-**Figura X.X – Diagrama de Secuencia: Flujo RAG**
 
 ## 4.1 Descripción General
 
